@@ -18,7 +18,7 @@ def evaluate(qb_output, index):
             hit10 += 1
         elif len(rank) and rank < 10:
             hit10 += 1
-    
+
     func = lambda x,s: print(f'recall@{str(s):2s} = {x/len(qb_output):.3f}' + '  '*10) 
     # [func(x,s) for x,s in [(hit10,10), (hit5,5), (hit3,3)]];
     func(hit3, 3) 
@@ -45,6 +45,9 @@ def infer():
     index.add(xb_output)  # add vectors to the index
     
     recall3 = evaluate(qb_output, index)
+
+    with open('../output/recall3.json', 'w') as file:
+        json.dump({"recall3": recall3}, file)
 
     return recall3
 

@@ -45,7 +45,7 @@ pylab.rcParams.update(
     {
         "legend.fontsize": "small",
         "font.size": 12,
-        "figure.figsize": (9, 3.5),
+        "figure.figsize": (6, 2.2),
         "axes.labelsize": "small",
         "axes.titlesize": "medium",
         "axes.grid": "on",

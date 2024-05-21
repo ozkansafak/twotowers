@@ -82,7 +82,7 @@ class TwoTowerNetwork(nn.Module):
         #train_epochs = np.linspace(0, len(self.train_loss) / (len(qb_train) // batch_size), len(self.train_loss))
         plt.plot(self.epochs, self.train_loss, 'k', alpha=.7)
         plt.title('Train loss')
-        plt.xlabel('number of batches');        
+        plt.xlabel('number of epochs');        
 
 
 def generate_gpt_queries(name, details, description, size=3):
@@ -122,7 +122,7 @@ def generate_gpt_queries(name, details, description, size=3):
 
 
 def shuffle_and_split(qb, xb, split=0.8):
-    np.random.seed(34)  # seed(36): train for 200 epochs, recall@3=.37
+    np.random.seed(41)  # seed(36): train for 200 epochs, recall@3=.37
     idx = np.arange(len(qb))
     np.random.shuffle(idx)
     xb = xb[idx]
