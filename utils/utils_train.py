@@ -30,7 +30,7 @@ class TwoTowerNetwork(nn.Module):
         self.epoch = 0
         self.epochs = [0]
         
-    def forward(self, u, v, batch_size=1024, label_smoothing=0.1):
+    def forward(self, u, v, batch_size=1024, label_smoothing=0.0):
         qb_output = self.qb_tower(u)
         xb_output = self.xb_tower(v)
 
@@ -55,7 +55,7 @@ class TwoTowerNetwork(nn.Module):
             total += a[0] * (1 if len(a) == 1 else a[1]) 
             print(f'{str(tuple(a)):15s}', total)
 
-    def train(self, qb_train, xb_train, num_epochs, batch_size):
+    def train(self, qb_train, xb_train, num_epochs, batch_size, label_smoothing=0.0):
         n =  len(qb_train) // batch_size
         
         for e in range(num_epochs):
@@ -66,7 +66,7 @@ class TwoTowerNetwork(nn.Module):
                 xb_batch = xb_train[start:start+batch_size]
 
                 # Forward pass: compute predictions
-                logits, loss, _, _ = self(qb_batch, xb_batch, batch_size)
+                logits, loss, _, _ = self(qb_batch, xb_batch, batch_size, label_smoothing=label_smoothing)
 
                 # Backward pass and optimization
                 self.optimizer.zero_grad()  # zero out the gradient ops
@@ -121,8 +121,8 @@ def generate_gpt_queries(name, details, description, size=3):
     return queries
 
 
-def shuffle_and_split(qb, xb, split=0.8):
-    np.random.seed(41)  # seed(36): train for 200 epochs, recall@3=.37
+def shuffle_and_split(qb, xb, split=0.8, seed=42):
+    np.random.seed(seed)  # seed(36): train for 200 epochs, recall@3=.37
     idx = np.arange(len(qb))
     np.random.shuffle(idx)
     xb = xb[idx]
