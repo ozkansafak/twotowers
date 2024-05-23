@@ -45,14 +45,10 @@ class TwoTowerNetwork(nn.Module):
         # qb_tower
         self.qb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(d, hidden_dim),
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
-            nn.Linear(d, hidden_dim),
-            nn.ReLU(),
             nn.Linear(d, hidden_dim),         
         )
 
@@ -163,7 +159,7 @@ def generate_gpt_queries(name, details, description, size=3):
 
 
 def shuffle_and_split(qb, xb, split=0.8, seed=None):
-    seed = seed or np.random.choice(2**32 - 1)
+    seed = seed or np.random.choice((2**32 - 1))
     np.random.seed(seed)  # seed(36): train for 200 epochs, recall@3=.37
     idx = np.arange(len(qb))
     np.random.shuffle(idx)
