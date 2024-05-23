@@ -1,14 +1,5 @@
-from typing import Tuple, List, Optional, Union, Any
-from utils.utils import *
-import torch
-torch.manual_seed(0)
-import random
-random.seed(0)
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
+from utils.imports import *
 
-dropout = 0.1
 
 class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
     # https://huggingface.co/transformers/v1.2.0/_modules/pytorch_transformers/optimization.html
@@ -41,35 +32,35 @@ class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
 
 
 class TwoTowerNetwork(nn.Module):
-    def __init__(self, d, hidden_dim, learning_rate=0.0001):
+    def __init__(self, d, hidden_dim):
         super(TwoTowerNetwork, self).__init__()
 
         # qb_tower
         self.qb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),
-            nn.Dropout(dropout),
+            nn.Dropout(config['dropout']),
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),         
-            nn.Dropout(dropout),
+            nn.Dropout(config['dropout']),
         )
 
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(self.parameters(), lr=config['learning_rate'])
         self.train_loss = [None]
         self.epoch = 0
         self.epochs = [0]
         
-    def forward(self, u, v, batch_size=1024, label_smoothing=0.0):
+    def forward(self, u, v):
         qb_output = self.qb_tower(u)
         xb_output = self.xb_tower(v)
 
-        targets_batch = torch.arange(batch_size, dtype=torch.long)
+        targets_batch = torch.arange(config['batch_size'], dtype=torch.long)
 
         logits = dot_product = torch.einsum ('ik, jk -> ij', qb_output, xb_output)
         probs = F.softmax(logits, dim=-1)
-        loss = F.cross_entropy(logits, targets_batch, label_smoothing=label_smoothing)
+        loss = F.cross_entropy(logits, targets_batch, label_smoothing=config['label_smoothing'])
 
         return probs, loss, qb_output, xb_output
 
@@ -86,44 +77,41 @@ class TwoTowerNetwork(nn.Module):
             total += a[0] * (1 if len(a) == 1 else a[1]) 
             print(f'{str(tuple(a)):15s}', total)
 
-    def train(self, qb_train, xb_train, num_epochs, batch_size, label_smoothing=0.0):
-        n =  len(qb_train) // batch_size
-        
+    def train(self, qb_train, xb_train, num_epochs):
+        n = len(qb_train) // config['batch_size']
+
         for e in range(num_epochs):
-            for start in range(0, len(qb_train), batch_size):
-                if start + batch_size > len(qb_train):
+            for start in range(0, len(qb_train), config['batch_size']):
+                if start + config['batch_size'] > len(qb_train):
                     continue
-                qb_batch = qb_train[start:start+batch_size]
-                xb_batch = xb_train[start:start+batch_size]
+                qb_batch = qb_train[start:start+config['batch_size']]
+                xb_batch = xb_train[start:start+config['batch_size']]
 
                 # Forward pass: compute predictions
-                logits, loss, _, _ = self(qb_batch, xb_batch, batch_size, label_smoothing=label_smoothing)
+                logits, loss, _, _ = self(qb_batch, xb_batch)
 
                 # Backward pass and optimization
                 self.optimizer.zero_grad()  # zero out the gradient ops
                 loss.backward()  # compute gradients
                 self.optimizer.step()  # apply gradients on the parameters.
                 self.train_loss.append(loss.item())
-                
+
                 self.epochs.append(self.epochs[-1] + 1/n)
             self.epoch += 1
             print(f"Epoch [{self.epoch:2d}], Loss: {loss.item():.4f}", end='\r')
 
-    def plot(self, qb_train, batch_size, list_test_epochs, list_recall3):
+    def plot(self, qb_train, list_test_epochs, list_recall3):
         plt.figure(figsize=(10, 2.2))
         ax1 = plt.subplot(1,2,1)
         ax1.plot(self.epochs, self.train_loss, 'k', alpha=.7)
-        ax1.set_xlim(0)
-        ax1.set_ylim(0)
         ax1.set_title('Train loss')
         ax1.set_xlabel('number of epochs');
-                
+
         ax2 = plt.subplot(1,2,2)
         ax2.plot(list_test_epochs, list_recall3, 'k', alpha=.7)
-        ax2.set_xlim(0)
-        ax2.set_ylim(0)
         ax2.set_title(f'recall@3: {max(list_recall3):.2}')
-        ax2.set_xlabel('number of epochs');
+        ax2.set_xlabel('number of epochs')
+        [(ax.set_xlim(0,len(list_test_epochs)), ax.set_ylim(0)) for ax in [ax1, ax2]]
         plt.show()
 
 
