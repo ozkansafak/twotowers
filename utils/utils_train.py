@@ -8,6 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+dropout = 0.2
+
 class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
     # https://huggingface.co/transformers/v1.2.0/_modules/pytorch_transformers/optimization.html
     """ Linearly increases learning rate from 0.1 to 1 over `x0` training steps.
@@ -45,11 +47,13 @@ class TwoTowerNetwork(nn.Module):
         # qb_tower
         self.qb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),
+            nn.Dropout(dropout)
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),         
+            nn.Dropout(dropout)
         )
 
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
@@ -118,7 +122,7 @@ class TwoTowerNetwork(nn.Module):
         ax2.plot(list_test_epochs, list_recall3, 'k', alpha=.7)
         ax2.set_xlim(0)
         ax2.set_ylim(0)
-        ax2.set_title('recall@3')
+        ax2.set_title(f'recall@3: {max(list_recall3):.2}')
         ax2.set_xlabel('number of epochs');        
 
 
