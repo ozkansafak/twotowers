@@ -1,3 +1,4 @@
+from typing import Tuple, List, Optional, Union, Any
 from utils.utils import *
 import torch
 torch.manual_seed(0)
@@ -6,6 +7,36 @@ random.seed(0)
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+
+class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
+    # https://huggingface.co/transformers/v1.2.0/_modules/pytorch_transformers/optimization.html
+    """ Linearly increases learning rate from 0.1 to 1 over `x0` training steps.
+        Decreases learning rate from 1. to 0.1 over the next `x1 - x0` steps following a b/(x+a) hyperbolic curve.
+        Stays constant at 0.1 after x1 steps.
+    """
+
+    def __init__(self, optimizer: Any,
+                  x0: float, x1: float, last_epoch: int = -1):
+        self.x0 = x0 / config['acc_batch_size']
+        self.x1 = x1 / config['acc_batch_size']
+        super(WarmupCosineAnnealing, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
+
+    def lr_lambda(self, x: float) -> float:
+        # .step() invokes this function through LambdaLR
+        if x < self.x0:
+            # linear warm up stage
+            y = .9 * x / max(1, self.x0) + 0.1 
+        elif self.x0 <= x < self.x1:
+            # cosine annealing stage
+            T = (self.x1 - self.x0) * 2
+            A = .5 * .9
+            y = A * np.cos(2 * np.pi * (x - self.x0) / T) + 0.55    
+        elif self.x1 <= x:
+            # constant 10% learning_rate
+            y = .1
+
+        return y
+
 
 class TwoTowerNetwork(nn.Module):
     def __init__(self, d, hidden_dim, learning_rate=0.0001):
@@ -78,11 +109,21 @@ class TwoTowerNetwork(nn.Module):
             self.epoch += 1
             print(f"Epoch [{self.epoch:2d}], Loss: {loss.item():.4f}", end='\r')
 
-    def plot(self, qb_train, batch_size):
-        #train_epochs = np.linspace(0, len(self.train_loss) / (len(qb_train) // batch_size), len(self.train_loss))
-        plt.plot(self.epochs, self.train_loss, 'k', alpha=.7)
-        plt.title('Train loss')
-        plt.xlabel('number of epochs');        
+    def plot(self, qb_train, batch_size, list_test_epochs, list_recall3):
+        plt.figure(figsize=(10, 2.2))
+        ax1 = plt.subplot(1,2,1)
+        ax1.plot(self.epochs, self.train_loss, 'k', alpha=.7)
+        ax1.set_xlim(0)
+        ax1.set_ylim(0)
+        ax1.set_title('Train loss')
+        ax1.set_xlabel('number of epochs');
+                
+        ax2 = plt.subplot(1,2,2)
+        ax2.plot(list_test_epochs, list_recall3, 'k', alpha=.7)
+        ax2.set_xlim(0)
+        ax2.set_ylim(0)
+        ax2.set_title('recall@3')
+        ax2.set_xlabel('number of epochs');        
 
 
 def generate_gpt_queries(name, details, description, size=3):
@@ -121,7 +162,8 @@ def generate_gpt_queries(name, details, description, size=3):
     return queries
 
 
-def shuffle_and_split(qb, xb, split=0.8, seed=42):
+def shuffle_and_split(qb, xb, split=0.8, seed=None):
+    seed = seed or np.random.choice(2**32 - 1)
     np.random.seed(seed)  # seed(36): train for 200 epochs, recall@3=.37
     idx = np.arange(len(qb))
     np.random.shuffle(idx)
@@ -189,3 +231,5 @@ def write_output_embeddings(model, qb_test, xb_test):
     
     with open('output/qb_xb_output.pkl', 'wb') as file:
         pickle.dump((qb_output, xb_output), file)
+
+
