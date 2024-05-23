@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-dropout = 0.2
+dropout = 0.1
 
 class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
     # https://huggingface.co/transformers/v1.2.0/_modules/pytorch_transformers/optimization.html
@@ -47,13 +47,13 @@ class TwoTowerNetwork(nn.Module):
         # qb_tower
         self.qb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),         
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
         )
 
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
@@ -123,7 +123,8 @@ class TwoTowerNetwork(nn.Module):
         ax2.set_xlim(0)
         ax2.set_ylim(0)
         ax2.set_title(f'recall@3: {max(list_recall3):.2}')
-        ax2.set_xlabel('number of epochs');        
+        ax2.set_xlabel('number of epochs');
+        plt.show()
 
 
 def generate_gpt_queries(name, details, description, size=3):
