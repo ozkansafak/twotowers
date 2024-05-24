@@ -1,5 +1,6 @@
 import numpy as np
 
+
 # Load the function
 def evaluate(qb_output, index):
     ranks = []
@@ -19,10 +20,10 @@ def evaluate(qb_output, index):
         elif len(rank) and rank < 10:
             hit10 += 1
 
-    func = lambda x,s: print(f'recall@{str(s):2s} = {x/len(qb_output):.3f}' + '  '*10) 
+    func = lambda x,s: print(f'recall@{str(s)} = {x/len(qb_output):.3f}' + '  '*10) 
     # [func(x,s) for x,s in [(hit10,10), (hit5,5), (hit3,3)]];
     func(hit3, 3) 
-    
+
     return hit3 / len(qb_output)
 
 
@@ -43,7 +44,7 @@ def infer():
 
     index.train(xb_output)
     index.add(xb_output)  # add vectors to the index
-    
+
     recall3 = evaluate(qb_output, index)
 
     with open('../output/recall3.json', 'w') as file:
@@ -54,9 +55,4 @@ def infer():
 
 if __name__ == "__main__":
     infer()
-
-
-
-
-
 

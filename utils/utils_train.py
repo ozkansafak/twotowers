@@ -38,11 +38,17 @@ class TwoTowerNetwork(nn.Module):
         # qb_tower
         self.qb_tower = nn.Sequential(
             nn.Linear(d, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(config['dropout']),
+            nn.Linear(d, hidden_dim),
             nn.Dropout(config['dropout']),
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
+            nn.Linear(d, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(config['dropout']),
             nn.Linear(d, hidden_dim),         
             nn.Dropout(config['dropout']),
         )
@@ -72,11 +78,12 @@ class TwoTowerNetwork(nn.Module):
         return u_output, v_output
 
     def size(self):
-        total = 0
+        num_params = 0
         for name, params in self.named_parameters():
             a = params.shape
-            total += a[0] * (1 if len(a) == 1 else a[1]) 
-            print(f'{str(tuple(a)):15s}', total)
+            num_params += a[0] * (1 if len(a) == 1 else a[1]) 
+
+        print(f"num_params:{num_params/1e6:.2f} million ")
 
     def fit(self, qb_train, xb_train, num_epochs):
         n = len(qb_train) // config['batch_size']
@@ -216,12 +223,11 @@ def get_text_embeddings(scroll_id, elSearch, scroll_time="1m"):
 
 def write_output_embeddings(model, qb_test, xb_test):
     qb_output, xb_output = model.inference(qb_test, xb_test)
-    
+
     # Cast qb and xb as numpy arrays
     qb_output = qb_output.detach().numpy()
     xb_output = xb_output.detach().numpy()
-    
+
     with open('output/qb_xb_output.pkl', 'wb') as file:
         pickle.dump((qb_output, xb_output), file)
-
 
