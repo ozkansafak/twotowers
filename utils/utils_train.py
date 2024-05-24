@@ -37,19 +37,19 @@ class TwoTowerNetwork(nn.Module):
 
         # qb_tower
         self.qb_tower = nn.Sequential(
-            nn.Linear(d, hidden_dim),
+            nn.Linear(d, hidden_dim, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
-            nn.Linear(d, hidden_dim),
+            nn.Linear(d, hidden_dim, bias=False),
             nn.Dropout(config['dropout']),
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
-            nn.Linear(d, hidden_dim),
+            nn.Linear(d, hidden_dim, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
-            nn.Linear(d, hidden_dim),         
+            nn.Linear(d, hidden_dim, bias=False),         
             nn.Dropout(config['dropout']),
         )
 
@@ -57,7 +57,17 @@ class TwoTowerNetwork(nn.Module):
         self.train_loss = [None]
         self.epoch = 0
         self.epochs = [0]
+
+        # print model details
+        self.print_deets()
         
+    def print_deets(self):
+        [print(f"{key:16s}: {val}") for key, val in config.items()]
+        print()
+        print(self)
+        self.print_size()
+
+
     def forward(self, u, v):
         qb_output = self.qb_tower(u)
         xb_output = self.xb_tower(v)
@@ -77,7 +87,7 @@ class TwoTowerNetwork(nn.Module):
         
         return u_output, v_output
 
-    def size(self):
+    def print_size(self):
         num_params = 0
         for name, params in self.named_parameters():
             a = params.shape
@@ -118,7 +128,7 @@ class TwoTowerNetwork(nn.Module):
 
         ax2 = plt.subplot(1,2,2)
         ax2.plot(list_test_epochs, list_recall3, 'k', alpha=.7)
-        ax2.set_title(f'recall@3: {max(list_recall3):.2}')
+        ax2.set_title(f'recall@3: {max(list_recall3):.3f}')
         ax2.set_xlabel('number of epochs')
         [(ax.set_xlim(0,len(list_test_epochs)), ax.set_ylim(0)) for ax in [ax1, ax2]]
         ax2.set_ylim(0,1)
@@ -222,12 +232,15 @@ def get_text_embeddings(scroll_id, elSearch, scroll_time="1m"):
 
 
 def write_output_embeddings(model, qb_test, xb_test):
+
+    # Pass the input vectors through the Two-Tower Network
     qb_output, xb_output = model.inference(qb_test, xb_test)
 
-    # Cast qb and xb as numpy arrays
+    # Cast qb_output and xb_output as numpy arrays
     qb_output = qb_output.detach().numpy()
     xb_output = xb_output.detach().numpy()
 
+    # Write to output vectors to pickle file
     with open('output/qb_xb_output.pkl', 'wb') as file:
         pickle.dump((qb_output, xb_output), file)
 
