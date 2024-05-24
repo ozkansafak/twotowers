@@ -1,4 +1,4 @@
-from utils.imports import *
+from utils.utils_imports import *
 
 
 class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
@@ -65,9 +65,10 @@ class TwoTowerNetwork(nn.Module):
         return probs, loss, qb_output, xb_output
 
     def inference(self, u, v):
+        self.eval()
         u_output = self.qb_tower(u)
         v_output = self.xb_tower(v)
-
+        
         return u_output, v_output
 
     def size(self):
@@ -77,8 +78,9 @@ class TwoTowerNetwork(nn.Module):
             total += a[0] * (1 if len(a) == 1 else a[1]) 
             print(f'{str(tuple(a)):15s}', total)
 
-    def train(self, qb_train, xb_train, num_epochs):
+    def fit(self, qb_train, xb_train, num_epochs):
         n = len(qb_train) // config['batch_size']
+        self.train()
 
         for e in range(num_epochs):
             for start in range(0, len(qb_train), config['batch_size']):
@@ -112,6 +114,7 @@ class TwoTowerNetwork(nn.Module):
         ax2.set_title(f'recall@3: {max(list_recall3):.2}')
         ax2.set_xlabel('number of epochs')
         [(ax.set_xlim(0,len(list_test_epochs)), ax.set_ylim(0)) for ax in [ax1, ax2]]
+        ax2.set_ylim(0,1)
         plt.show()
 
 
