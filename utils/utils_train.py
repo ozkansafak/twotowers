@@ -1,36 +1,6 @@
 from utils.utils_imports import *
 
 
-class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
-    # https://huggingface.co/transformers/v1.2.0/_modules/pytorch_transformers/optimization.html
-    """ Linearly increases learning rate from 0.1 to 1 over `x0` training steps.
-        Decreases learning rate from 1. to 0.1 over the next `x1 - x0` steps following a b/(x+a) hyperbolic curve.
-        Stays constant at 0.1 after x1 steps.
-    """
-
-    def __init__(self, optimizer: Any,
-                  x0: float, x1: float, last_epoch: int = -1):
-        self.x0 = x0 / config['acc_batch_size']
-        self.x1 = x1 / config['acc_batch_size']
-        super(WarmupCosineAnnealing, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
-
-    def lr_lambda(self, x: float) -> float:
-        # .step() invokes this function through LambdaLR
-        if x < self.x0:
-            # linear warm up stage
-            y = .9 * x / max(1, self.x0) + 0.1 
-        elif self.x0 <= x < self.x1:
-            # cosine annealing stage
-            T = (self.x1 - self.x0) * 2
-            A = .5 * .9
-            y = A * np.cos(2 * np.pi * (x - self.x0) / T) + 0.55    
-        elif self.x1 <= x:
-            # constant 10% learning_rate
-            y = .1
-
-        return y
-
-
 class TwoTowerNetwork(nn.Module):
     def __init__(self, d, hidden_dim):
         super(TwoTowerNetwork, self).__init__()
@@ -40,8 +10,6 @@ class TwoTowerNetwork(nn.Module):
             nn.Linear(d, hidden_dim, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
-            nn.Linear(d, hidden_dim, bias=False),
-            nn.Dropout(config['dropout']),
         )
 
         # xb_tower 
@@ -49,8 +17,13 @@ class TwoTowerNetwork(nn.Module):
             nn.Linear(d, hidden_dim, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
-            nn.Linear(d, hidden_dim, bias=False),         
+        )
+
+        self.mlp = nn.Sequential(
+            nn.Linear(2 * d, hidden_dim, bias=False),
+            nn.ReLU(),
             nn.Dropout(config['dropout']),
+            nn.Linear(hidden_dim, 1, bias=False),
         )
 
         self.optimizer = optim.Adam(self.parameters(), lr=config['learning_rate'])
@@ -60,32 +33,66 @@ class TwoTowerNetwork(nn.Module):
 
         # print model details
         self.print_deets()
-        
-    def print_deets(self):
-        [print(f"{key:16s}: {val}") for key, val in config.items()]
-        print()
-        print(self)
-        self.print_size()
-
-
-    def forward(self, u, v):
-        qb_output = self.qb_tower(u)
-        xb_output = self.xb_tower(v)
-
-        targets_batch = torch.arange(config['batch_size'], dtype=torch.long)
-
-        logits = dot_product = torch.einsum ('ik, jk -> ij', qb_output, xb_output)
-        probs = F.softmax(logits, dim=-1)
-        loss = F.cross_entropy(logits, targets_batch, label_smoothing=config['label_smoothing'])
-
-        return probs, loss, qb_output, xb_output
 
     def inference(self, u, v):
         self.eval()
         u_output = self.qb_tower(u)
         v_output = self.xb_tower(v)
-        
+        out = torch.concatenate((u_output, v_output), axis=-1) # shape: (b, b, 2 * d)
+        logits = self.mlp(out).squeeze(-1) # shape: (b, b)
+        probs = F.softmax(logits, dim=1)
+
         return u_output, v_output
+
+    def forward(self, qb_batch, xb_batch, targets_batch):    
+        """
+            qb_batch.shape = (b, b, d)
+            xb_batch.shape = (b, b, d)
+            targets_batch.shape = (b, b)
+        """
+
+        qb_output = self.qb_tower(qb_batch)
+        xb_output = self.xb_tower(xb_batch)
+        out = torch.concatenate((qb_output, xb_output), axis=-1) # shape: (b, b, 2 * d)
+
+        logits = self.mlp(out).squeeze(-1) # shape: (b, b)
+
+        probs = F.softmax(logits, dim=1)
+        loss = F.cross_entropy(logits, targets_batch, label_smoothing=config['label_smoothing'])
+
+        return probs, loss, qb_output, xb_output
+
+    def fit(self, qb_train, xb_train):
+        self.train()
+        n = (len(qb_train) // config['batch_size']) * config['batch_size'] # 20480
+
+        for b in range(0, n, config['batch_size']):
+            u = qb_train[b:b+config['batch_size']] # shape: (b, d) 
+            v = xb_train[b:b+config['batch_size']] # shape: (b, d) 
+
+            qb_batch, xb_batch, targets_batch = fused_trainset(u, v)
+
+            start = time.time()
+            # Forward pass: compute predictions
+            logits, loss, _, _ = self(qb_batch, xb_batch, targets_batch)
+            print(f"forward pass b:{b} ({qb_batch.shape}): {print_runtime(start,False)}")
+
+            # Backward pass and optimization
+            self.optimizer.zero_grad()  # zero out the gradient ops
+            loss.backward()  # compute gradients
+            self.optimizer.step()  # apply gradients on the parameters.
+            self.train_loss.append(loss.item())
+
+            self.epochs.append(self.epochs[-1] + 1/n)
+
+        self.epoch += 1
+        print(f"Epoch [{self.epoch:2d}], Loss: {loss.item():.4f}", end='\r')
+
+    def print_deets(self):
+        [print(f"{key:16s}: {val}") for key, val in config.items()]
+        print()
+        print(self)
+        self.print_size()
 
     def print_size(self):
         num_params = 0
@@ -94,30 +101,6 @@ class TwoTowerNetwork(nn.Module):
             num_params += a[0] * (1 if len(a) == 1 else a[1]) 
 
         print(f"num_params:{num_params/1e6:.2f} million ")
-
-    def fit(self, qb_train, xb_train, num_epochs):
-        n = len(qb_train) // config['batch_size']
-        self.train()
-
-        for e in range(num_epochs):
-            for start in range(0, len(qb_train), config['batch_size']):
-                if start + config['batch_size'] > len(qb_train):
-                    continue
-                qb_batch = qb_train[start:start+config['batch_size']]
-                xb_batch = xb_train[start:start+config['batch_size']]
-
-                # Forward pass: compute predictions
-                logits, loss, _, _ = self(qb_batch, xb_batch)
-
-                # Backward pass and optimization
-                self.optimizer.zero_grad()  # zero out the gradient ops
-                loss.backward()  # compute gradients
-                self.optimizer.step()  # apply gradients on the parameters.
-                self.train_loss.append(loss.item())
-
-                self.epochs.append(self.epochs[-1] + 1/n)
-            self.epoch += 1
-            print(f"Epoch [{self.epoch:2d}], Loss: {loss.item():.4f}", end='\r')
 
     def plot(self, qb_train, list_test_epochs, list_recall3):
         plt.figure(figsize=(10, 2.2))
@@ -133,6 +116,40 @@ class TwoTowerNetwork(nn.Module):
         [(ax.set_xlim(0,len(list_test_epochs)), ax.set_ylim(0)) for ax in [ax1, ax2]]
         ax2.set_ylim(0,1)
         plt.show()
+
+
+def fused_trainset(u, v):
+    """ 
+        u is one batch of queries. 
+        v is one batch of items.
+        (u[i], v[i]), i = 0, ... b-1, makes a postive query-item pair 
+        u.shape = (b, d)
+        v.shape = (b, d)
+    """
+    start = time.time()
+    n = len(u) # n: batch_size
+    qb_batch = []
+    xb_batch = []
+    targets_batch = []
+
+    for i in range(n):
+        qb_batch.append([])
+        xb_batch.append([])
+        targets_batch.append(i)
+        for q in range(n):
+            qb_batch[-1].append(u[i])
+            xb_batch[-1].append(v[q])
+        qb_batch[-1] = torch.stack(qb_batch[-1])
+        xb_batch[-1] = torch.stack(xb_batch[-1])
+
+    qb_batch = torch.stack(qb_batch)
+    xb_batch = torch.stack(xb_batch)
+    targets_batch = torch.tensor(targets_batch)
+
+    print(f"out of fused_trainset: {tuple(qb_batch.shape)} {tuple(targets_batch.shape)} {time.time()-start:.2f} sec")
+    
+    # qb_batch.shape == (b, b, d)
+    return qb_batch, xb_batch, targets_batch
 
 
 def generate_gpt_queries(name, details, description, size=3):
