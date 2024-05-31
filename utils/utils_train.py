@@ -1,36 +1,5 @@
 from utils.utils_imports import *
 
-
-class WarmupCosineAnnealing(torch.optim.lr_scheduler.LambdaLR):
-    # https://huggingface.co/transformers/v1.2.0/_modules/pytorch_transformers/optimization.html
-    """ Linearly increases learning rate from 0.1 to 1 over `x0` training steps.
-        Decreases learning rate from 1. to 0.1 over the next `x1 - x0` steps following a b/(x+a) hyperbolic curve.
-        Stays constant at 0.1 after x1 steps.
-    """
-
-    def __init__(self, optimizer: Any,
-                  x0: float, x1: float, last_epoch: int = -1):
-        self.x0 = x0 / config['acc_batch_size']
-        self.x1 = x1 / config['acc_batch_size']
-        super(WarmupCosineAnnealing, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
-
-    def lr_lambda(self, x: float) -> float:
-        # .step() invokes this function through LambdaLR
-        if x < self.x0:
-            # linear warm up stage
-            y = .9 * x / max(1, self.x0) + 0.1 
-        elif self.x0 <= x < self.x1:
-            # cosine annealing stage
-            T = (self.x1 - self.x0) * 2
-            A = .5 * .9
-            y = A * np.cos(2 * np.pi * (x - self.x0) / T) + 0.55    
-        elif self.x1 <= x:
-            # constant 10% learning_rate
-            y = .1
-
-        return y
-
-
 class TwoTowerNetwork(nn.Module):
     def __init__(self, d, hidden_dim):
         super(TwoTowerNetwork, self).__init__()
@@ -55,19 +24,11 @@ class TwoTowerNetwork(nn.Module):
 
         self.optimizer = optim.Adam(self.parameters(), lr=config['learning_rate'])
         self.train_loss = [None]
-        self.epoch = 0
         self.epochs = [0]
 
         # print model details
         self.print_deets()
         
-    def print_deets(self):
-        [print(f"{key:16s}: {val}") for key, val in config.items()]
-        print()
-        print(self)
-        self.print_size()
-
-
     def forward(self, u, v):
         qb_output = self.qb_tower(u)
         xb_output = self.xb_tower(v)
@@ -79,6 +40,33 @@ class TwoTowerNetwork(nn.Module):
         loss = F.cross_entropy(logits, targets_batch, label_smoothing=config['label_smoothing'])
 
         return probs, loss, qb_output, xb_output
+
+    def fit(self, qb_train, xb_train):
+        n = (len(qb_train) // config['batch_size']) * config['batch_size'] # 20480
+        self.train()
+
+        for start in range(0, n, config['batch_size']):
+            qb_batch = qb_train[start:start+config['batch_size']]
+            xb_batch = xb_train[start:start+config['batch_size']]
+
+            # Forward pass: compute predictions
+            logits, loss, _, _ = self(qb_batch, xb_batch)
+
+            # Backward pass and optimization
+            self.optimizer.zero_grad()  # zero out the gradient ops
+            loss.backward()  # compute gradients
+            self.optimizer.step()  # apply gradients on the parameters.
+            self.train_loss.append(loss.item())
+
+            self.epochs.append(round(self.epochs[-1] + config['batch_size'] / n, 6)) 
+            print(f"epoch {self.epochs[-1]:.3f}, train_loss: {self.train_loss[-1]:.4f}")
+            
+
+    def print_deets(self):
+        [print(f"{key:16s}: {val}") for key, val in config.items()]
+        print()
+        print(self)
+        self.print_size()
 
     def inference(self, u, v):
         self.eval()
@@ -95,34 +83,10 @@ class TwoTowerNetwork(nn.Module):
 
         print(f"num_params:{num_params/1e6:.2f} million ")
 
-    def fit(self, qb_train, xb_train, num_epochs):
-        n = len(qb_train) // config['batch_size']
-        self.train()
-
-        for e in range(num_epochs):
-            for start in range(0, len(qb_train), config['batch_size']):
-                if start + config['batch_size'] > len(qb_train):
-                    continue
-                qb_batch = qb_train[start:start+config['batch_size']]
-                xb_batch = xb_train[start:start+config['batch_size']]
-
-                # Forward pass: compute predictions
-                logits, loss, _, _ = self(qb_batch, xb_batch)
-
-                # Backward pass and optimization
-                self.optimizer.zero_grad()  # zero out the gradient ops
-                loss.backward()  # compute gradients
-                self.optimizer.step()  # apply gradients on the parameters.
-                self.train_loss.append(loss.item())
-
-                self.epochs.append(self.epochs[-1] + 1/n)
-            self.epoch += 1
-            print(f"Epoch [{self.epoch:2d}], Loss: {loss.item():.4f}", end='\r')
-
     def plot(self, qb_train, list_test_epochs, list_recall3):
         plt.figure(figsize=(10, 2.2))
         ax1 = plt.subplot(1,2,1)
-        ax1.plot(self.epochs, self.train_loss, 'k', alpha=.7)
+        ax1.semilogy(self.epochs, self.train_loss, 'k', alpha=.7)
         ax1.set_title('Train loss')
         ax1.set_xlabel('number of epochs');
 
