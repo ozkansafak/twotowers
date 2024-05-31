@@ -1,3 +1,4 @@
+
 from utils.utils_imports import *
 
 class TwoTowerNetwork(nn.Module):
@@ -34,7 +35,7 @@ class TwoTowerNetwork(nn.Module):
         # print model details
         self.print_deets()
 
-    def forward(self, qb_batch, xb_batch, targets_batch):    
+    def forward(self, qb_batch, xb_batch, targets_batch, sample_weights):    
         """
             qb_batch.shape = (b, b, d)
             xb_batch.shape = (b, b, d)
@@ -46,9 +47,11 @@ class TwoTowerNetwork(nn.Module):
         out = torch.concatenate((qb_output, xb_output), axis=-1) # shape: (b, b, 2 * d)
 
         logits = self.mlp(out).squeeze(-1) # shape: (b, b)
+        probs = F.sigmoid(logits)
+        loss = F.binary_cross_entropy_with_logits(logits, targets_batch)
 
-        probs = F.softmax(logits, dim=1)
-        loss = F.cross_entropy(logits, targets_batch, label_smoothing=config['label_smoothing'])
+        # import pdb
+        # pdb.set_trace()
 
         return probs, loss, qb_output, xb_output
 
@@ -60,11 +63,11 @@ class TwoTowerNetwork(nn.Module):
             qb_seg = qb_train[b:b+config['batch_size']] # shape: (b, d) 
             xb_seg = xb_train[b:b+config['batch_size']] # shape: (b, d) 
 
-            qb_batch, xb_batch, targets_batch = fused_trainset(qb_seg, xb_seg)
+            qb_batch, xb_batch, targets_batch, sample_weights = fused_trainset(qb_seg, xb_seg)
 
             start = time.time()
             # Forward pass: compute predictions
-            logits, loss, _, _ = self(qb_batch, xb_batch, targets_batch)
+            logits, loss, _, _ = self.forward(qb_batch, xb_batch, targets_batch, sample_weights)
             print(f"forward pass b:{b/n} ({qb_batch.shape}): {print_runtime(start,False)}")
 
             # Backward pass and optimization
@@ -74,7 +77,7 @@ class TwoTowerNetwork(nn.Module):
             self.train_loss.append(loss.item())
 
             self.epochs.append(round(self.epochs[-1] + config['batch_size'] / n, 6)) 
-            print(f"epoch {self.epochs[-1]:.3f}, train_loss: {self.train_loss[-1]:.3f}")
+            print(f"epoch {self.epochs[-1]:.3f}, train_loss: {self.train_loss[-1]:.5f}")
 
         print(f"Epoch [{self.epochs[-1]:.2f}], Loss: {loss.item():.4f}")
 
@@ -131,25 +134,28 @@ def fused_trainset(qb_seg, xb_seg):
     qb_batch = []
     xb_batch = []
     targets_batch = []
+    sample_weights = []
 
     for i in range(n):
-        qb_batch.append([])
-        xb_batch.append([])
-        targets_batch.append(i)
         for q in range(n):
-            qb_batch[-1].append(qb_seg[i])
-            xb_batch[-1].append(xb_seg[q])
-        qb_batch[-1] = torch.stack(qb_batch[-1])
-        xb_batch[-1] = torch.stack(xb_batch[-1])
-
+            qb_batch.append(qb_seg[i])
+            xb_batch.append(xb_seg[q])
+            if i == q:
+                targets_batch.append(1.0)
+                sample_weights.append(1)
+            else:
+                targets_batch.append(0.0)
+                sample_weights.append(1/(config['batch_size']-1))
+            
     qb_batch = torch.stack(qb_batch)
     xb_batch = torch.stack(xb_batch)
     targets_batch = torch.tensor(targets_batch)
+    sample_weights = torch.tensor(sample_weights)
 
     print(f"out of fused_trainset: {tuple(qb_batch.shape)} {tuple(targets_batch.shape)} {time.time()-start:.2f} sec")
-    
+
     # qb_batch.shape == (b, b, d)
-    return qb_batch, xb_batch, targets_batch
+    return qb_batch, xb_batch, targets_batch, sample_weights
 
 
 def generate_gpt_queries(name, details, description, size=3):
