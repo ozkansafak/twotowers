@@ -1,48 +1,38 @@
 from utils.utils_imports import *
 
-
 class TwoTowerNetwork(nn.Module):
-    def __init__(self, d, hidden_dim):
+    def __init__(self, d):
         super(TwoTowerNetwork, self).__init__()
 
         # qb_tower
         self.qb_tower = nn.Sequential(
-            nn.Linear(d, hidden_dim, bias=False),
+            nn.Linear(d, d, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
+            nn.Linear(d, d, bias=False),
         )
 
         # xb_tower 
         self.xb_tower = nn.Sequential(
-            nn.Linear(d, hidden_dim, bias=False),
+            nn.Linear(d, d, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
+            nn.Linear(d, d, bias=False),
         )
 
         self.mlp = nn.Sequential(
-            nn.Linear(2 * d, hidden_dim, bias=False),
             nn.ReLU(),
             nn.Dropout(config['dropout']),
-            nn.Linear(hidden_dim, 1, bias=False),
+            nn.Linear(2 * d, 1, bias=False),
+            nn.Dropout(config['dropout']),
         )
 
         self.optimizer = optim.Adam(self.parameters(), lr=config['learning_rate'])
         self.train_loss = [None]
-        self.epoch = 0
         self.epochs = [0]
 
         # print model details
         self.print_deets()
-
-    def inference(self, u, v):
-        self.eval()
-        u_output = self.qb_tower(u)
-        v_output = self.xb_tower(v)
-        out = torch.concatenate((u_output, v_output), axis=-1) # shape: (b, b, 2 * d)
-        logits = self.mlp(out).squeeze(-1) # shape: (b, b)
-        probs = F.softmax(logits, dim=1)
-
-        return u_output, v_output
 
     def forward(self, qb_batch, xb_batch, targets_batch):    
         """
@@ -67,15 +57,15 @@ class TwoTowerNetwork(nn.Module):
         n = (len(qb_train) // config['batch_size']) * config['batch_size'] # 20480
 
         for b in range(0, n, config['batch_size']):
-            u = qb_train[b:b+config['batch_size']] # shape: (b, d) 
-            v = xb_train[b:b+config['batch_size']] # shape: (b, d) 
+            qb_seg = qb_train[b:b+config['batch_size']] # shape: (b, d) 
+            xb_seg = xb_train[b:b+config['batch_size']] # shape: (b, d) 
 
-            qb_batch, xb_batch, targets_batch = fused_trainset(u, v)
+            qb_batch, xb_batch, targets_batch = fused_trainset(qb_seg, xb_seg)
 
             start = time.time()
             # Forward pass: compute predictions
             logits, loss, _, _ = self(qb_batch, xb_batch, targets_batch)
-            print(f"forward pass b:{b} ({qb_batch.shape}): {print_runtime(start,False)}")
+            print(f"forward pass b:{b/n} ({qb_batch.shape}): {print_runtime(start,False)}")
 
             # Backward pass and optimization
             self.optimizer.zero_grad()  # zero out the gradient ops
@@ -83,10 +73,20 @@ class TwoTowerNetwork(nn.Module):
             self.optimizer.step()  # apply gradients on the parameters.
             self.train_loss.append(loss.item())
 
-            self.epochs.append(self.epochs[-1] + 1/n)
+            self.epochs.append(round(self.epochs[-1] + config['batch_size'] / n, 6)) 
+            print(f"epoch {self.epochs[-1]:.3f}, train_loss: {self.train_loss[-1]:.3f}")
 
-        self.epoch += 1
-        print(f"Epoch [{self.epoch:2d}], Loss: {loss.item():.4f}", end='\r')
+        print(f"Epoch [{self.epochs[-1]:.2f}], Loss: {loss.item():.4f}")
+
+    def inference(self, u, v):
+        self.eval()
+        u_output = self.qb_tower(u)
+        v_output = self.xb_tower(v)
+        out = torch.concatenate((u_output, v_output), axis=-1) # shape: (b, b, 2 * d)
+        logits = self.mlp(out).squeeze(-1) # shape: (b, b)
+        probs = F.softmax(logits, dim=1)
+
+        return u_output, v_output
 
     def print_deets(self):
         [print(f"{key:16s}: {val}") for key, val in config.items()]
@@ -118,16 +118,16 @@ class TwoTowerNetwork(nn.Module):
         plt.show()
 
 
-def fused_trainset(u, v):
+def fused_trainset(qb_seg, xb_seg):
     """ 
-        u is one batch of queries. 
-        v is one batch of items.
-        (u[i], v[i]), i = 0, ... b-1, makes a postive query-item pair 
-        u.shape = (b, d)
-        v.shape = (b, d)
+        qb_seg is one batch of queries. 
+        xb_seg is one batch of items.
+        (qb_seg[i], xb_seg[i]), i = 0, ... b-1, makes a postive query-item pair 
+        qb_seg.shape = (b, d)
+        xb_seg.shape = (b, d)
     """
     start = time.time()
-    n = len(u) # n: batch_size
+    n = len(qb_seg) # n: batch_size
     qb_batch = []
     xb_batch = []
     targets_batch = []
@@ -137,8 +137,8 @@ def fused_trainset(u, v):
         xb_batch.append([])
         targets_batch.append(i)
         for q in range(n):
-            qb_batch[-1].append(u[i])
-            xb_batch[-1].append(v[q])
+            qb_batch[-1].append(qb_seg[i])
+            xb_batch[-1].append(xb_seg[q])
         qb_batch[-1] = torch.stack(qb_batch[-1])
         xb_batch[-1] = torch.stack(xb_batch[-1])
 
