@@ -48,16 +48,14 @@ class TwoTowerNetwork(nn.Module):
 
         logits = self.mlp(out).squeeze(-1) # shape: (b, b)
         probs = F.sigmoid(logits)
-        loss = F.binary_cross_entropy_with_logits(logits, targets_batch)
-
-        # import pdb
-        # pdb.set_trace()
+        loss = F.binary_cross_entropy_with_logits(logits, targets_batch, weight=sample_weights)
 
         return probs, loss, qb_output, xb_output
 
     def fit(self, qb_train, xb_train):
         self.train()
         n = (len(qb_train) // config['batch_size']) * config['batch_size'] # 20480
+        print(f"model.fit n:{n}, num_batches:{len(qb_train) // config['batch_size']}, qb_train.shape: {qb_train.shape}")
 
         for b in range(0, n, config['batch_size']):
             qb_seg = qb_train[b:b+config['batch_size']] # shape: (b, d) 
@@ -68,7 +66,6 @@ class TwoTowerNetwork(nn.Module):
             start = time.time()
             # Forward pass: compute predictions
             logits, loss, _, _ = self.forward(qb_batch, xb_batch, targets_batch, sample_weights)
-            print(f"forward pass b:{b/n} ({qb_batch.shape}): {print_runtime(start,False)}")
 
             # Backward pass and optimization
             self.optimizer.zero_grad()  # zero out the gradient ops
@@ -142,19 +139,19 @@ def fused_trainset(qb_seg, xb_seg):
             xb_batch.append(xb_seg[q])
             if i == q:
                 targets_batch.append(1.0)
-                sample_weights.append(1)
+                sample_weights.append(1.0)
             else:
                 targets_batch.append(0.0)
-                sample_weights.append(1/(config['batch_size']-1))
+                sample_weights.append(1.0)
             
     qb_batch = torch.stack(qb_batch)
     xb_batch = torch.stack(xb_batch)
     targets_batch = torch.tensor(targets_batch)
     sample_weights = torch.tensor(sample_weights)
 
-    print(f"out of fused_trainset: {tuple(qb_batch.shape)} {tuple(targets_batch.shape)} {time.time()-start:.2f} sec")
+    print(f"fused_trainset: {tuple(qb_batch.shape)} {tuple(targets_batch.shape)} {time.time()-start:.2f} sec -> ", end='')
 
-    # qb_batch.shape == (b, b, d)
+    # qb_batch.shape == (b * b, d)
     return qb_batch, xb_batch, targets_batch, sample_weights
 
 
