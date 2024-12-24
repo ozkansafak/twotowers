@@ -1,4 +1,3 @@
-
 from utils.utils_imports import *
 
 class TwoTowerNetwork(nn.Module):
